@@ -47,6 +47,9 @@ SrsLazyObject::SrsLazyObject()
 
 SrsLazyObject::~SrsLazyObject()
 {
+    for(int i = 0; i < weak_ptrs_.size(); ++i) {
+        weak_ptrs_.at(i)->reset_obj();
+    }
 }
 
 void SrsLazyObject::gc_use()
@@ -62,6 +65,29 @@ void SrsLazyObject::gc_dispose()
 int32_t SrsLazyObject::gc_ref()
 {
     return gc_ref_;
+}
+
+void SrsLazyObject::add_weak_object(SrsWeakLazyObjectFlag* obj)
+{
+    weak_ptrs_.push_back(obj);
+}
+
+SrsWeakLazyObjectFlag::SrsWeakLazyObjectFlag()
+{
+    valid_ = true;
+}
+SrsWeakLazyObjectFlag::~SrsWeakLazyObjectFlag()
+{
+}
+
+bool SrsWeakLazyObjectFlag::valid()
+{
+    return valid_;
+}
+
+void SrsWeakLazyObjectFlag::reset_obj()
+{
+    valid_ = false;
 }
 
 ISrsLazyGc::ISrsLazyGc()

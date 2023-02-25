@@ -48,6 +48,7 @@ public:
     virtual std::string remote_ip() = 0;
 };
 
+class SrsWeakLazyObjectFlag;
 // Lazy-sweep resource, never sweep util all wrappers are freed.
 // See https://github.com/ossrs/srs/issues/3176#lazy-sweep
 class SrsLazyObject
@@ -55,6 +56,7 @@ class SrsLazyObject
 private:
     // The reference count of resource, 0 is no wrapper and safe to sweep.
     int32_t gc_ref_;
+    std::vector<SrsWeakLazyObjectFlag*> weak_ptrs_;
 public:
     SrsLazyObject();
     virtual ~SrsLazyObject();
@@ -65,6 +67,22 @@ public:
     virtual void gc_dispose();
     // The current reference count of resource.
     virtual int32_t gc_ref();
+public:
+    void add_weak_object(SrsWeakLazyObjectFlag* obj);
+};
+
+class SrsWeakLazyObjectFlag 
+{
+private:
+    bool valid_;
+public:
+    SrsWeakLazyObjectFlag();
+    virtual ~SrsWeakLazyObjectFlag();
+
+    bool valid();
+protected:
+    friend class SrsLazyObject;
+    void reset_obj();
 };
 
 // The lazy-sweep GC, wait for a long time to dispose resource even when resource is disposable.

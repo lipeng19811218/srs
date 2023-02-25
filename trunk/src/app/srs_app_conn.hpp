@@ -219,6 +219,82 @@ public:
     }
 };
 
+template<typename T>
+class SrsWeakLazyObjectWrapper : public ISrsResource
+{
+private:
+    SrsWeakLazyObjectFlag* weak_ptr_;
+    T* resource_;
+public:
+    SrsWeakLazyObjectWrapper(T* resource) {
+        weak_ptr_ = new SrsWeakLazyObjectFlag();
+        init(resource);
+    }
+    ~SrsWeakLazyObjectWrapper() {
+        srs_freep(weak_ptr_);
+    }
+private:
+    void init(T* resource) {
+        resource_ = resource;
+        resource_->add_weak_object(weak_ptr_);
+    }
+public:
+    T* resource() {
+        return resource_;
+    }
+    bool is_valid() {
+        return weak_ptr_->valid();
+    }
+
+    void lock() {
+        if(!resource_ || !is_valid()) {
+            return;
+        }
+
+        resource_->gc_use();
+    }
+
+    void unlock() {
+        if(!resource_ || !is_valid()) {
+            return;
+        }
+
+        resource_->gc_dispose();
+        if (resource_->gc_ref() == 0) {
+            _srs_gc->remove(resource_);
+        }
+    }
+// Interface ISrsResource
+public:
+    virtual const SrsContextId& get_id() {
+        return resource_->get_id();
+    }
+    virtual std::string desc() {
+        return resource_->desc();
+    }
+};
+
+template<typename T>
+class SrsAutoLockWeakLazyObject 
+{
+private:
+    SrsWeakLazyObjectWrapper<T>* obj_;
+public:
+    SrsAutoLockWeakLazyObject(SrsWeakLazyObjectWrapper<T>* o) 
+    {
+        obj_ = o;
+        if(obj_) {
+            obj_->lock();
+        }
+    }
+    ~SrsAutoLockWeakLazyObject() 
+    {
+        if(obj_) {
+            obj_->unlock();
+        }
+    }
+};
+
 // If a connection is able be expired, user can use HTTP-API to kick-off it.
 class ISrsExpire
 {

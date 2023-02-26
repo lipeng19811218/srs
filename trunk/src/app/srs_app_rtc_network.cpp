@@ -36,9 +36,8 @@ extern bool srs_is_dtls(const uint8_t* data, size_t len);
 extern bool srs_is_rtp_or_rtcp(const uint8_t* data, size_t len);
 extern bool srs_is_rtcp(const uint8_t* data, size_t len);
 
-SrsRtcNetworks::SrsRtcNetworks(SrsRtcConnection* conn)
+SrsRtcNetworks::SrsRtcNetworks(SrsLazyObjectWrapper<SrsRtcConnection>* conn): conn_(conn->resource())
 {
-    conn_ = conn;
     delta_ = new SrsEphemeralDelta();
     udp_ = new SrsRtcUdpNetwork(conn_, delta_);
     tcp_ = new SrsRtcTcpNetwork(conn_, delta_);
@@ -147,10 +146,9 @@ srs_error_t SrsRtcDummyNetwork::write(void* buf, size_t size, ssize_t* nwrite)
     return srs_success;
 }
 
-SrsRtcUdpNetwork::SrsRtcUdpNetwork(SrsRtcConnection* conn, SrsEphemeralDelta* delta)
+SrsRtcUdpNetwork::SrsRtcUdpNetwork(SrsWeakLazyObjectWrapper<SrsRtcConnection>& conn, SrsEphemeralDelta* delta):conn_(conn.resource())
 {
     state_ = SrsRtcNetworkStateInit;
-    conn_ = conn;
     delta_ = delta;
     sendonly_skt_ = NULL;
     pp_address_change_ = new SrsErrorPithyPrint();
@@ -203,7 +201,11 @@ srs_error_t SrsRtcUdpNetwork::on_dtls(char* data, int nb_data)
 
 srs_error_t SrsRtcUdpNetwork::on_dtls_alert(std::string type, std::string desc)
 {
-    return conn_->on_dtls_alert(type, desc);
+    if(!conn_.is_valid()) {
+        return srs_error_new(ERROR_RTC_INVALID_CONN, "invalid rtc conn");
+    }
+    SrsAutoLockWeakLazyObject<SrsRtcConnection> lock(&conn_);
+    return conn_.resource()->on_dtls_alert(type, desc);
 }
 
 srs_error_t SrsRtcUdpNetwork::on_dtls_handshake_done()
@@ -215,7 +217,11 @@ srs_error_t SrsRtcUdpNetwork::on_dtls_handshake_done()
         return err;
     }
 
-    if ((err = conn_->on_dtls_handshake_done()) != srs_success) {
+    if(!conn_.is_valid()) {
+        return srs_error_new(ERROR_RTC_INVALID_CONN, "invalid rtc conn");
+    }
+    SrsAutoLockWeakLazyObject<SrsRtcConnection> lock(&conn_);
+    if ((err = conn_.resource()->on_dtls_handshake_done()) != srs_success) {
         return srs_error_wrap(err, "udp");
     }
 
@@ -250,7 +256,11 @@ srs_error_t SrsRtcUdpNetwork::on_rtcp(char* data, int nb_data)
         _srs_blackhole->sendto(unprotected_buf, nb_unprotected_buf);
     }
 
-    if ((err = conn_->on_rtcp(unprotected_buf, nb_unprotected_buf)) != srs_success) {
+    if(!conn_.is_valid()) {
+        return srs_error_new(ERROR_RTC_INVALID_CONN, "invalid rtc conn");
+    }
+    SrsAutoLockWeakLazyObject<SrsRtcConnection> lock(&conn_);
+    if ((err = conn_.resource()->on_rtcp(unprotected_buf, nb_unprotected_buf)) != srs_success) {
         return srs_error_wrap(err, "cipher=%d", nb_data);
     }
 
@@ -264,7 +274,11 @@ srs_error_t SrsRtcUdpNetwork::on_rtp(char* data, int nb_data)
     // Update stat when we received data.
     delta_->add_delta(nb_data, 0);
 
-    if ((err = conn_->on_rtp_cipher(data, nb_data)) != srs_success) {
+    if(!conn_.is_valid()) {
+        return srs_error_new(ERROR_RTC_INVALID_CONN, "invalid rtc conn");
+    }
+    SrsAutoLockWeakLazyObject<SrsRtcConnection> lock(&conn_);
+    if ((err = conn_.resource()->on_rtp_cipher(data, nb_data)) != srs_success) {
         return srs_error_wrap(err, "cipher=%d", nb_data);
     }
 
@@ -278,7 +292,7 @@ srs_error_t SrsRtcUdpNetwork::on_rtp(char* data, int nb_data)
         _srs_blackhole->sendto(unprotected_buf, nb_unprotected_buf);
     }
 
-    if ((err = conn_->on_rtp_plaintext(unprotected_buf, nb_unprotected_buf)) != srs_success) {
+    if ((err = conn_.resource()->on_rtp_plaintext(unprotected_buf, nb_unprotected_buf)) != srs_success) {
         return srs_error_wrap(err, "cipher=%d", nb_data);
     }
 
@@ -346,13 +360,17 @@ void SrsRtcUdpNetwork::update_sendonly_socket(SrsUdpMuxSocket* skt)
     }
 
     // If no cache, build cache and setup the relations in connection.
+    if(!conn_.is_valid()) {
+        return;
+    }
+    SrsAutoLockWeakLazyObject<SrsRtcConnection> lock(&conn_);
     if (!addr_cache) {
         peer_addresses_[peer_id] = addr_cache = skt->copy_sendonly();
-        _srs_rtc_manager->add_with_id(peer_id, conn_);
+        conn_.resource()->add_in_manager_with_id(peer_id);
 
         uint64_t fast_id = skt->fast_id();
         if (fast_id) {
-            _srs_rtc_manager->add_with_fast_id(fast_id, conn_);
+            conn_.resource()->add_in_manager_with_fast_id(fast_id);
         }
     }
 
@@ -373,8 +391,12 @@ srs_error_t SrsRtcUdpNetwork::on_stun(SrsStunPacket* r, char* data, int nb_data)
         return err;
     }
 
+    if(!conn_.is_valid()) {
+        return srs_error_new(ERROR_RTC_INVALID_CONN, "invalid rtc conn");
+    }
+    SrsAutoLockWeakLazyObject<SrsRtcConnection> lock(&conn_);
     string ice_pwd;
-    if ((err = conn_->on_binding_request(r, ice_pwd)) != srs_success) {
+    if ((err = conn_.resource()->on_binding_request(r, ice_pwd)) != srs_success) {
         return srs_error_wrap(err, "udp");
     }
 
@@ -436,9 +458,8 @@ srs_error_t SrsRtcUdpNetwork::write(void* buf, size_t size, ssize_t* nwrite)
     return sendonly_skt_->sendto(buf, size, SRS_UTIME_NO_TIMEOUT);
 }
 
-SrsRtcTcpNetwork::SrsRtcTcpNetwork(SrsRtcConnection* conn, SrsEphemeralDelta* delta)
+SrsRtcTcpNetwork::SrsRtcTcpNetwork(SrsWeakLazyObjectWrapper<SrsRtcConnection>& conn, SrsEphemeralDelta* delta): conn_(conn.resource())
 {
-    conn_ = conn;
     delta_ = delta;
     sendonly_skt_ = NULL;
     transport_ = new SrsSecurityTransport(this);
@@ -450,6 +471,10 @@ SrsRtcTcpNetwork::SrsRtcTcpNetwork(SrsRtcConnection* conn, SrsEphemeralDelta* de
 SrsRtcTcpNetwork::~SrsRtcTcpNetwork()
 {
     srs_freep(transport_);
+    if(owner_) {
+        owner_->resource()->close();
+        srs_freep(owner_);
+    }
 }
 
 void SrsRtcTcpNetwork::update_sendonly_socket(ISrsProtocolReadWriter* skt)
@@ -466,7 +491,11 @@ srs_error_t SrsRtcTcpNetwork::on_dtls_handshake_done()
         return err;
     }
 
-    if ((err = conn_->on_dtls_handshake_done()) != srs_success) {
+    if(!conn_.is_valid()) {
+        return srs_error_new(ERROR_RTC_INVALID_CONN, "invalid rtc conn");
+    }
+    SrsAutoLockWeakLazyObject<SrsRtcConnection> lock(&conn_);
+    if ((err = conn_.resource()->on_dtls_handshake_done()) != srs_success) {
         return srs_error_wrap(err, "udp");
     }
 
@@ -476,7 +505,11 @@ srs_error_t SrsRtcTcpNetwork::on_dtls_handshake_done()
 
 srs_error_t SrsRtcTcpNetwork::on_dtls_alert(std::string type, std::string desc)
 {
-    return conn_->on_dtls_alert(type, desc);
+    if(!conn_.is_valid()) {
+        return srs_error_new(ERROR_RTC_INVALID_CONN, "invalid rtc conn");
+    }
+    SrsAutoLockWeakLazyObject<SrsRtcConnection> lock(&conn_);
+    return conn_.resource()->on_dtls_alert(type, desc);
 }
 
 srs_error_t SrsRtcTcpNetwork::protect_rtp(void* packet, int* nb_cipher)
@@ -502,8 +535,12 @@ srs_error_t SrsRtcTcpNetwork::on_stun(SrsStunPacket* r, char* data, int nb_data)
         return err;
     }
 
+    if(!conn_.is_valid()) {
+        return srs_error_new(ERROR_RTC_INVALID_CONN, "invalid rtc conn");
+    }
+    SrsAutoLockWeakLazyObject<SrsRtcConnection> lock(&conn_);
     string ice_pwd;
-    if ((err = conn_->on_binding_request(r, ice_pwd)) != srs_success) {
+    if ((err = conn_.resource()->on_binding_request(r, ice_pwd)) != srs_success) {
         return srs_error_wrap(err, "udp");
     }
 
@@ -601,7 +638,11 @@ srs_error_t SrsRtcTcpNetwork::on_rtcp(char* data, int nb_data)
         _srs_blackhole->sendto(unprotected_buf, nb_unprotected_buf);
     }
 
-    if ((err = conn_->on_rtcp(unprotected_buf, nb_unprotected_buf)) != srs_success) {
+    if(!conn_.is_valid()) {
+        return srs_error_new(ERROR_RTC_INVALID_CONN, "invalid rtc conn");
+    }
+    SrsAutoLockWeakLazyObject<SrsRtcConnection> lock(&conn_);
+    if ((err = conn_.resource()->on_rtcp(unprotected_buf, nb_unprotected_buf)) != srs_success) {
         return srs_error_wrap(err, "cipher=%d", nb_data);
     }
 
@@ -614,8 +655,11 @@ srs_error_t SrsRtcTcpNetwork::on_rtp(char* data, int nb_data)
 
     // Update stat when we received data.
     delta_->add_delta(nb_data, 0);
-
-    if ((err = conn_->on_rtp_cipher(data, nb_data)) != srs_success) {
+    if(!conn_.is_valid()) {
+        return srs_error_new(ERROR_RTC_INVALID_CONN, "invalid rtc conn");
+    }
+    SrsAutoLockWeakLazyObject<SrsRtcConnection> lock(&conn_);
+    if ((err = conn_.resource()->on_rtp_cipher(data, nb_data)) != srs_success) {
         return srs_error_wrap(err, "cipher=%d", nb_data);
     }
 
@@ -629,7 +673,7 @@ srs_error_t SrsRtcTcpNetwork::on_rtp(char* data, int nb_data)
         _srs_blackhole->sendto(unprotected_buf, nb_unprotected_buf);
     }
 
-    if ((err = conn_->on_rtp_plaintext(unprotected_buf, nb_unprotected_buf)) != srs_success) {
+    if ((err = conn_.resource()->on_rtp_plaintext(unprotected_buf, nb_unprotected_buf)) != srs_success) {
         return srs_error_wrap(err, "cipher=%d", nb_data);
     }
 
@@ -694,29 +738,43 @@ void SrsRtcTcpNetwork::dispose()
 
 #define SRS_RTC_TCP_PACKET_MAX 1500
 
-SrsRtcTcpConn::SrsRtcTcpConn(ISrsProtocolReadWriter* skt, std::string cip, int port, ISrsResourceManager* cm)
+SrsRtcTcpConn::SrsRtcTcpConn(SrsLazyObjectWrapper<SrsRtcTcpConn>* w)
 {
-    manager_ = cm;
-    ip_ = cip;
-    port_ = port;
-    skt_ = skt;
+    wrapper_ = w;
     delta_ = new SrsNetworkDelta();
     delta_->set_io(skt_, skt_);
+    //TODO: FIXME: this isnot fixed by SrsLazyObject, here it still use raw pointer.
     trd_ = new SrsSTCoroutine("tcp", this, _srs_context->get_id());
     session_ = NULL;
     pkt_ = new char[SRS_RTC_TCP_PACKET_MAX];
-    _srs_rtc_manager->subscribe(this);
+    srs_info("SrsRtcTcpConn::SrsRtcTcpConn - new p=%p", this);
 }
 
 SrsRtcTcpConn::~SrsRtcTcpConn()
 {
-    _srs_rtc_manager->unsubscribe(this);
+    srs_info("SrsRtcTcpConn::~SrsRtcTcpConn - delete p=%p", this);
     trd_->interrupt();
     srs_freep(trd_);
 
     srs_freepa(pkt_);
     srs_freep(delta_);
     srs_freep(skt_);
+}
+
+srs_error_t SrsRtcTcpConn::initialize(ISrsProtocolReadWriter* skt, std::string cip, int port, ISrsResourceManager* cm)
+{
+    manager_ = cm;
+    ip_ = cip;
+    port_ = port;
+    skt_ = skt;
+
+    return srs_success;
+}
+
+srs_error_t SrsRtcTcpConn::close()
+{
+    trd_->interrupt();
+    return srs_success;
 }
 
 ISrsKbpsDelta* SrsRtcTcpConn::delta()
@@ -754,13 +812,14 @@ srs_error_t SrsRtcTcpConn::cycle()
 
     // TODO: FIXME: Should manage RTC TCP connection by _srs_rtc_manager.
     // Because we use manager to manage this object, not the http connection object, so we must remove it here.
-    manager_->remove(this);
+    manager_->remove(wrapper_);
 
     // TODO: FIXME: When TCP connection(transport) closed, should notify session to dispose, should not free them simultaneously.
     // Only remove session when network is established, because client might use other UDP network.
-    if(session_ && session_->tcp()->is_establelished()) {
-        session_->tcp()->set_state(SrsRtcNetworkStateClosed);
-        _srs_rtc_manager->remove(session_);
+    if(session_ && session_->resource()->tcp()->is_establelished()) {
+        session_->resource()->tcp()->set_state(SrsRtcNetworkStateClosed);
+        session_->resource()->close();
+        //_srs_rtc_manager->remove(session_);
     }
 
     // For HTTP-API timeout, we think it's done successfully,
@@ -847,34 +906,34 @@ srs_error_t SrsRtcTcpConn::handshake()
     }
 
     srs_assert(!session_);
-    SrsRtcConnection* session = dynamic_cast<SrsRtcConnection*>(_srs_rtc_manager->find_by_name(ping.get_username()));
+    SrsLazyObjectWrapper<SrsRtcConnection>* session = dynamic_cast<SrsLazyObjectWrapper<SrsRtcConnection>*>(_srs_rtc_manager->find_by_name(ping.get_username()));
     // TODO: FIXME: For ICE trickle, we may get STUN packets before SDP answer, so maybe should response it.
     if (!session) {
         return srs_error_new(ERROR_RTC_TCP_STUN, "no session, stun username=%s", ping.get_username().c_str());
     }
 
-    session->switch_to_context();
+    session->resource()->switch_to_context();
     srs_trace("recv stun packet from %s:%d, use-candidate=%d, ice-controlled=%d, ice-controlling=%d",
         ip_.c_str(), port_, ping.get_use_candidate(), ping.get_ice_controlled(), ping.get_ice_controlling());
 
     // Should support only one TCP candidate.
-    SrsRtcTcpNetwork* network = dynamic_cast<SrsRtcTcpNetwork*>(session->tcp());
+    SrsRtcTcpNetwork* network = dynamic_cast<SrsRtcTcpNetwork*>(session->resource()->tcp());
     if (!network->owner()) {
-        network->set_owner(this);
-        session_ = session;
+        network->set_owner(wrapper_);
+        session_ = session->copy();
     }
-    if (network->owner() != this) {
+    if (network->owner()->resource() != this ) {
         return srs_error_new(ERROR_RTC_TCP_UNIQUE, "only support one network");
     }
 
     // For each binding request, update the TCP socket.
     if (ping.is_binding_request()) {
-        session_->tcp()->update_sendonly_socket(skt_);
-        session_->tcp()->set_peer_id(ip_, port_);
+        session_->resource()->tcp()->update_sendonly_socket(skt_);
+        session_->resource()->tcp()->set_peer_id(ip_, port_);
     }
 
     // Use the session network to handle packet.
-    return session_->tcp()->on_stun(&ping, pkt_, npkt);
+    return session_->resource()->tcp()->on_stun(&ping, pkt_, npkt);
 }
 
 srs_error_t SrsRtcTcpConn::read_packet(char* pkt, int* nb_pkt)
@@ -914,46 +973,28 @@ srs_error_t SrsRtcTcpConn::on_tcp_pkt(char* pkt, int nb_pkt)
     bool is_rtcp = srs_is_rtcp((uint8_t*)pkt, nb_pkt);
 
     // When got any packet, the session is alive now.
-    session_->alive();
+    session_->resource()->alive();
 
     if (is_stun) {
         SrsStunPacket ping;
         if ((err = ping.decode(pkt, nb_pkt)) != srs_success) {
             return srs_error_wrap(err, "decode stun packet failed");
         }
-        return session_->tcp()->on_stun(&ping, pkt, nb_pkt);
+        return session_->resource()->tcp()->on_stun(&ping, pkt, nb_pkt);
     }
 
     if (is_rtp_or_rtcp && !is_rtcp) {
-        return session_->tcp()->on_rtp(pkt, nb_pkt);
+        return session_->resource()->tcp()->on_rtp(pkt, nb_pkt);
     }
 
     if (is_rtp_or_rtcp && is_rtcp) {
-        return session_->tcp()->on_rtcp(pkt, nb_pkt);
+        return session_->resource()->tcp()->on_rtcp(pkt, nb_pkt);
     }
 
     if (srs_is_dtls((uint8_t*)pkt, nb_pkt)) {
-        return session_->tcp()->on_dtls(pkt, nb_pkt);
+        return session_->resource()->tcp()->on_dtls(pkt, nb_pkt);
     }
 
     return srs_error_new(ERROR_RTC_UDP, "unknown packet");
-}
-
-void SrsRtcTcpConn::on_before_dispose(ISrsResource* c)
-{
-    if (!session_) return;
-
-    SrsRtcConnection* conn = dynamic_cast<SrsRtcConnection*>(c);
-    if(conn == session_) {
-        session_ = NULL;
-        // the related rtc connection will be disposed
-        srs_trace("RTC: tcp conn diposing, because of rtc connection");
-        trd_->interrupt();
-    }
-}
-
-void SrsRtcTcpConn::on_disposing(ISrsResource* c)
-{
-    return;
 }
 

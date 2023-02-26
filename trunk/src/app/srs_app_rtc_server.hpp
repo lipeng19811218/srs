@@ -16,6 +16,7 @@
 #include <srs_app_hybrid.hpp>
 #include <srs_app_rtc_sdp.hpp>
 #include <srs_app_async_call.hpp>
+#include <srs_app_conn.hpp>
 
 #include <string>
 
@@ -101,11 +102,13 @@ public:
     srs_error_t listen_api();
 public:
     // Peer start offering, we answer it.
-    srs_error_t create_session(SrsRtcUserConfig* ruc, SrsSdp& local_sdp, SrsRtcConnection** psession);
+    srs_error_t create_session(SrsRtcUserConfig* ruc, SrsSdp& local_sdp, 
+        SrsLazyObjectWrapper<SrsRtcConnection>* session);
 private:
-    srs_error_t do_create_session(SrsRtcUserConfig* ruc, SrsSdp& local_sdp, SrsRtcConnection* session);
+    srs_error_t do_create_session(SrsRtcUserConfig* ruc, SrsSdp& local_sdp, 
+        SrsLazyObjectWrapper<SrsRtcConnection>* session);
 public:
-    SrsRtcConnection* find_session_by_username(const std::string& ufrag);
+    SrsLazyObjectWrapper<SrsRtcConnection>* find_session_by_username(const std::string& ufrag);
 // interface ISrsFastTimer
 private:
     srs_error_t on_timer(srs_utime_t interval);

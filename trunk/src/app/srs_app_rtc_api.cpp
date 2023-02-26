@@ -222,10 +222,14 @@ srs_error_t SrsGoApiRtcPlay::serve_http(ISrsHttpResponseWriter* w, ISrsHttpMessa
 
     // TODO: FIXME: When server enabled, but vhost disabled, should report error.
     // We must do stat the client before hooks, because hooks depends on it.
-    SrsRtcConnection* session = NULL;
-    if ((err = server_->create_session(ruc, local_sdp, &session)) != srs_success) {
+    SrsLazyObjectWrapper<SrsRtcConnection>* session = new SrsLazyObjectWrapper<SrsRtcConnection>();
+    if ((err = server_->create_session(ruc, local_sdp, session)) != srs_success) {
+        srs_freep(session);
         return srs_error_wrap(err, "create session, dtls=%u, srtp=%u, eip=%s", ruc->dtls_, ruc->srtp_, ruc->eip_.c_str());
     }
+    string username = session->resource()->get_local_sdp()->get_ice_ufrag() + ":" +
+                        session->resource()->get_remote_sdp()->get_ice_ufrag();
+    _srs_rtc_manager->add_with_name(username, session);
 
     // We must do hook after stat, because depends on it.
     if ((err = http_hooks_on_play(ruc->req_)) != srs_success) {
@@ -242,9 +246,9 @@ srs_error_t SrsGoApiRtcPlay::serve_http(ISrsHttpResponseWriter* w, ISrsHttpMessa
     string local_sdp_escaped = srs_string_replace(local_sdp_str.c_str(), "\r\n", "\\r\\n");
 
     ruc->local_sdp_str_ = local_sdp_str;
-    ruc->session_id_ = session->username();
+    ruc->session_id_ = session->resource()->username();
 
-    srs_trace("RTC username=%s, dtls=%u, srtp=%u, offer=%dB, answer=%dB", session->username().c_str(),
+    srs_trace("RTC username=%s, dtls=%u, srtp=%u, offer=%dB, answer=%dB", session->resource()->username().c_str(),
         ruc->dtls_, ruc->srtp_, ruc->remote_sdp_str_.length(), local_sdp_escaped.length());
     srs_trace("RTC remote offer: %s", srs_string_replace(ruc->remote_sdp_str_.c_str(), "\r\n", "\\r\\n").c_str());
     srs_trace("RTC local answer: %s", local_sdp_escaped.c_str());
@@ -491,10 +495,15 @@ srs_error_t SrsGoApiRtcPublish::serve_http(ISrsHttpResponseWriter* w, ISrsHttpMe
 
     // TODO: FIXME: When server enabled, but vhost disabled, should report error.
     // We must do stat the client before hooks, because hooks depends on it.
-    SrsRtcConnection* session = NULL;
-    if ((err = server_->create_session(ruc, local_sdp, &session)) != srs_success) {
+    SrsLazyObjectWrapper<SrsRtcConnection>* session = new SrsLazyObjectWrapper<SrsRtcConnection>();
+    
+    if ((err = server_->create_session(ruc, local_sdp, session)) != srs_success) {
+        srs_freep(session);
         return srs_error_wrap(err, "create session");
     }
+    string username = session->resource()->get_local_sdp()->get_ice_ufrag() + ":" +
+                        session->resource()->get_remote_sdp()->get_ice_ufrag();
+    _srs_rtc_manager->add_with_name(username, session);
 
     // We must do hook after stat, because depends on it.
     if ((err = http_hooks_on_publish(ruc->req_)) != srs_success) {
@@ -511,9 +520,9 @@ srs_error_t SrsGoApiRtcPublish::serve_http(ISrsHttpResponseWriter* w, ISrsHttpMe
     string local_sdp_escaped = srs_string_replace(local_sdp_str.c_str(), "\r\n", "\\r\\n");
 
     ruc->local_sdp_str_ = local_sdp_str;
-    ruc->session_id_ = session->username();
+    ruc->session_id_ = session->resource()->username();
 
-    srs_trace("RTC username=%s, offer=%dB, answer=%dB", session->username().c_str(),
+    srs_trace("RTC username=%s, offer=%dB, answer=%dB", session->resource()->username().c_str(),
         ruc->remote_sdp_str_.length(), local_sdp_escaped.length());
     srs_trace("RTC remote offer: %s", srs_string_replace(ruc->remote_sdp_str_.c_str(), "\r\n", "\\r\\n").c_str());
     srs_trace("RTC local answer: %s", local_sdp_escaped.c_str());
@@ -719,12 +728,12 @@ srs_error_t SrsGoApiRtcNACK::do_serve_http(ISrsHttpResponseWriter* w, ISrsHttpMe
         return srs_error_new(ERROR_RTC_INVALID_PARAMS, "invalid drop=%s/%d", dropv.c_str(), drop);
     }
 
-    SrsRtcConnection* session = server_->find_session_by_username(username);
+    SrsLazyObjectWrapper<SrsRtcConnection>* session = server_->find_session_by_username(username);
     if (!session) {
         return srs_error_new(ERROR_RTC_NO_SESSION, "no session username=%s", username.c_str());
     }
 
-    session->simulate_nack_drop(drop);
+    session->resource()->simulate_nack_drop(drop);
 
     srs_trace("RTC: NACK session username=%s, drop=%s/%d", username.c_str(), dropv.c_str(), drop);
 

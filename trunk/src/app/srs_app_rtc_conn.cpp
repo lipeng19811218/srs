@@ -404,7 +404,7 @@ std::string SrsRtcAsyncCallOnStop::to_string()
     return std::string("");
 }
 
-SrsRtcPlayStream::SrsRtcPlayStream(SrsRtcConnection* s, const SrsContextId& cid)
+SrsRtcPlayStream::SrsRtcPlayStream(SrsLazyObjectWrapper<SrsRtcConnection>* s, const SrsContextId& cid)
 {
     cid_ = cid;
     trd_ = NULL;
@@ -413,7 +413,7 @@ SrsRtcPlayStream::SrsRtcPlayStream(SrsRtcConnection* s, const SrsContextId& cid)
     source_ = NULL;
 
     is_started = false;
-    session_ = s;
+    session_ = new SrsWeakLazyObjectWrapper<SrsRtcConnection>(s->resource());
 
     mw_msgs = 0;
     realtime = true;
@@ -432,7 +432,10 @@ SrsRtcPlayStream::SrsRtcPlayStream(SrsRtcConnection* s, const SrsContextId& cid)
 SrsRtcPlayStream::~SrsRtcPlayStream()
 {
     if (req_) {
-        session_->server_->exec_async_work(new SrsRtcAsyncCallOnStop(cid_, req_));
+        if(session_->is_valid()) {
+            SrsAutoLockWeakLazyObject<SrsRtcConnection> lock(session_);
+            session_->resource()->server_->exec_async_work(new SrsRtcAsyncCallOnStop(cid_, req_));
+        }
     }
 
     _srs_config->unsubscribe(this);
@@ -460,6 +463,7 @@ SrsRtcPlayStream::~SrsRtcPlayStream()
     SrsStatistic* stat = SrsStatistic::instance();
     // TODO: FIXME: Should finger out the err.
     stat->on_disconnect(cid_.c_str(), srs_success);
+    srs_freep(session_);
 }
 
 srs_error_t SrsRtcPlayStream::initialize(SrsRequest* req, std::map<uint32_t, SrsRtcTrackDescription*> sub_relations)
@@ -470,7 +474,8 @@ srs_error_t SrsRtcPlayStream::initialize(SrsRequest* req, std::map<uint32_t, Srs
 
     // We must do stat the client before hooks, because hooks depends on it.
     SrsStatistic* stat = SrsStatistic::instance();
-    if ((err = stat->on_client(cid_.c_str(), req_, session_, SrsRtcConnPlay)) != srs_success) {
+    //TODO: FIXME: the 3rd param of on_client should be session_. It need IExpire class but session is wrapped by lazy object 
+    if ((err = stat->on_client(cid_.c_str(), req_, NULL, SrsRtcConnPlay)) != srs_success) {
         return srs_error_wrap(err, "rtc: stat client");
     }
 
@@ -1047,11 +1052,11 @@ std::string SrsRtcAsyncCallOnUnpublish::to_string()
     return std::string("");
 }
 
-SrsRtcPublishStream::SrsRtcPublishStream(SrsRtcConnection* session, const SrsContextId& cid)
+SrsRtcPublishStream::SrsRtcPublishStream(SrsLazyObjectWrapper<SrsRtcConnection>* session, const SrsContextId& cid)
 {
     cid_ = cid;
     is_started = false;
-    session_ = session;
+    session_ = new SrsWeakLazyObjectWrapper<SrsRtcConnection>(session->resource());
     request_keyframe_ = false;
     pli_epp = new SrsErrorPithyPrint();
     twcc_epp_ = new SrsErrorPithyPrint(3.0);
@@ -1078,7 +1083,10 @@ SrsRtcPublishStream::SrsRtcPublishStream(SrsRtcConnection* session, const SrsCon
 SrsRtcPublishStream::~SrsRtcPublishStream()
 {
     if (req_) {
-        session_->server_->exec_async_work(new SrsRtcAsyncCallOnUnpublish(cid_, req_));
+        if(session_->is_valid()) {
+            SrsAutoLockWeakLazyObject<SrsRtcConnection> lock(session_);
+            session_->resource()->server_->exec_async_work(new SrsRtcAsyncCallOnUnpublish(cid_, req_));
+        }
     }
 
     srs_freep(timer_rtcp_);
@@ -1111,6 +1119,7 @@ SrsRtcPublishStream::~SrsRtcPublishStream()
     SrsStatistic* stat = SrsStatistic::instance();
     // TODO: FIXME: Should finger out the err.
     stat->on_disconnect(cid_.c_str(), srs_success);
+    srs_freep(session_);
 }
 
 srs_error_t SrsRtcPublishStream::initialize(SrsRequest* r, SrsRtcSourceDescription* stream_desc)
@@ -1121,7 +1130,8 @@ srs_error_t SrsRtcPublishStream::initialize(SrsRequest* r, SrsRtcSourceDescripti
 
     // We must do stat the client before hooks, because hooks depends on it.
     SrsStatistic* stat = SrsStatistic::instance();
-    if ((err = stat->on_client(cid_.c_str(), req_, session_, SrsRtcConnPublish)) != srs_success) {
+    //TODO: FIXME: the 3rd param of on_client should be session_. It need IExpire class but session is wrapped by lazy object 
+    if ((err = stat->on_client(cid_.c_str(), req_, NULL, SrsRtcConnPublish)) != srs_success) {
         return srs_error_wrap(err, "rtc: stat client");
     }
 
@@ -1511,8 +1521,14 @@ srs_error_t SrsRtcPublishStream::send_periodic_twcc()
             return srs_error_wrap(err, "encode, count=%u", twcc_fb_count_);
         }
 
-        if((err = session_->send_rtcp(pkt, buffer->pos())) != srs_success) {
-            return srs_error_wrap(err, "send twcc, count=%u", twcc_fb_count_);
+        if(!session_->is_valid()) {
+            return srs_error_new(ERROR_RTC_INVALID_CONN, "invalid rtc conn");
+        }
+        if(true) {
+            SrsAutoLockWeakLazyObject<SrsRtcConnection> lock(session_);
+            if((err = session_->resource()->send_rtcp(pkt, buffer->pos())) != srs_success) {
+                return srs_error_wrap(err, "send twcc, count=%u", twcc_fb_count_);
+            }
         }
     }
 
@@ -1626,7 +1642,11 @@ void SrsRtcPublishStream::request_keyframe(uint32_t ssrc, SrsContextId cid)
 srs_error_t SrsRtcPublishStream::do_request_keyframe(uint32_t ssrc, SrsContextId sub_cid)
 {
     srs_error_t err = srs_success;
-    if ((err = session_->send_rtcp_fb_pli(ssrc, sub_cid)) != srs_success) {
+    if(!session_->is_valid()) {
+        return srs_error_new(ERROR_RTC_INVALID_CONN, "invalid rtc conn");
+    }
+    SrsAutoLockWeakLazyObject<SrsRtcConnection> lock(session_);
+    if ((err = session_->resource()->send_rtcp_fb_pli(ssrc, sub_cid)) != srs_success) {
         srs_warn("PLI err %s", srs_error_desc(err).c_str());
         srs_freep(err);
     }
@@ -1698,8 +1718,9 @@ void SrsRtcPublishStream::update_send_report_time(uint32_t ssrc, const SrsNtp& n
     }
 }
 
-SrsRtcConnectionNackTimer::SrsRtcConnectionNackTimer(SrsRtcConnection* p) : p_(p)
+SrsRtcConnectionNackTimer::SrsRtcConnectionNackTimer(SrsLazyObjectWrapper<SrsRtcConnection>* p)
 {
+    p_ = new SrsWeakLazyObjectWrapper<SrsRtcConnection>(p->resource());
     _srs_hybrid->timer20ms()->subscribe(this);
 }
 
@@ -1711,8 +1732,11 @@ SrsRtcConnectionNackTimer::~SrsRtcConnectionNackTimer()
 srs_error_t SrsRtcConnectionNackTimer::on_timer(srs_utime_t interval)
 {
     srs_error_t err = srs_success;
-
-    if (!p_->nack_enabled_) {
+    if(!p_->is_valid()) {
+        return srs_error_new(ERROR_RTC_INVALID_CONN, "invalid rtc conn");
+    }
+    SrsAutoLockWeakLazyObject<SrsRtcConnection> lock(p_);
+    if (!p_->resource()->nack_enabled_) {
         return err;
     }
 
@@ -1725,7 +1749,7 @@ srs_error_t SrsRtcConnectionNackTimer::on_timer(srs_utime_t interval)
     }
 
     std::map<std::string, SrsRtcPublishStream*>::iterator it;
-    for (it = p_->publishers_.begin(); it != p_->publishers_.end(); it++) {
+    for (it = p_->resource()->publishers_.begin(); it != p_->resource()->publishers_.end(); it++) {
         SrsRtcPublishStream* publisher = it->second;
 
         if ((err = publisher->check_send_nacks()) != srs_success) {
@@ -1737,13 +1761,11 @@ srs_error_t SrsRtcConnectionNackTimer::on_timer(srs_utime_t interval)
     return err;
 }
 
-SrsRtcConnection::SrsRtcConnection(SrsRtcServer* s, const SrsContextId& cid)
+SrsRtcConnection::SrsRtcConnection(SrsLazyObjectWrapper<SrsRtcConnection>* wrap)
 {
     req_ = NULL;
-    cid_ = cid;
-
-    server_ = s;
-    networks_ = new SrsRtcNetworks(this);
+    wrapper_ = wrap;
+    networks_ = new SrsRtcNetworks(wrapper_);
 
     cache_iov_ = new iovec();
     cache_iov_->iov_base = new char[kRtpPacketSize];
@@ -1759,14 +1781,13 @@ SrsRtcConnection::SrsRtcConnection(SrsRtcServer* s, const SrsContextId& cid)
     pli_epp = new SrsErrorPithyPrint();
 
     nack_enabled_ = false;
-    timer_nack_ = new SrsRtcConnectionNackTimer(this);
-
-    _srs_rtc_manager->subscribe(this);
+    timer_nack_ = new SrsRtcConnectionNackTimer(wrapper_);
+    srs_trace("SrsRtcConnection::SrsRtcConnection - new p=%p", this);
 }
 
 SrsRtcConnection::~SrsRtcConnection()
 {
-    _srs_rtc_manager->unsubscribe(this);
+    srs_trace("SrsRtcConnection::~SrsRtcConnection - delete p=%p", this);
 
     srs_freep(timer_nack_);
 
@@ -1800,29 +1821,9 @@ SrsRtcConnection::~SrsRtcConnection()
     srs_freep(pli_epp);
 }
 
-void SrsRtcConnection::on_before_dispose(ISrsResource* c)
+void SrsRtcConnection::close()
 {
-    if (disposing_) {
-        return;
-    }
-
-    SrsRtcConnection* session = dynamic_cast<SrsRtcConnection*>(c);
-    if (session == this) {
-        disposing_ = true;
-    }
-
-    if (session && session == this) {
-        _srs_context->set_id(cid_);
-        srs_trace("RTC: session detach from [%s](%s), disposing=%d", c->get_id().c_str(),
-            c->desc().c_str(), disposing_);
-    }
-}
-
-void SrsRtcConnection::on_disposing(ISrsResource* c)
-{
-    if (disposing_) {
-        return;
-    }
+    disposing_ = true;
 }
 
 SrsSdp* SrsRtcConnection::get_local_sdp()
@@ -1872,7 +1873,7 @@ std::string SrsRtcConnection::desc()
 
 void SrsRtcConnection::expire()
 {
-    _srs_rtc_manager->remove(this);
+    disposing_ = true;
 }
 
 void SrsRtcConnection::switch_to_context()
@@ -2216,7 +2217,7 @@ srs_error_t SrsRtcConnection::on_dtls_alert(std::string type, std::string desc)
         switch_to_context();
 
         srs_trace("RTC: session destroy by DTLS alert, username=%s", username_.c_str());
-        _srs_rtc_manager->remove(this);
+        close();
     }
 
     return err;
@@ -2224,6 +2225,9 @@ srs_error_t SrsRtcConnection::on_dtls_alert(std::string type, std::string desc)
 
 bool SrsRtcConnection::is_alive()
 {
+    if(disposing_) {
+        return false;
+    }
     return last_stun_time + session_timeout > srs_get_system_time();
 }
 
@@ -3316,7 +3320,7 @@ srs_error_t SrsRtcConnection::create_player(SrsRequest* req, std::map<uint32_t, 
         return err;
     }
 
-    SrsRtcPlayStream* player = new SrsRtcPlayStream(this, _srs_context->get_id());
+    SrsRtcPlayStream* player = new SrsRtcPlayStream(wrapper_, _srs_context->get_id());
     if ((err = player->initialize(req, sub_relations)) != srs_success) {
         srs_freep(player);
         return srs_error_wrap(err, "SrsRtcPlayStream init");
@@ -3384,7 +3388,7 @@ srs_error_t SrsRtcConnection::create_publisher(SrsRequest* req, SrsRtcSourceDesc
         return err;
     }
 
-    SrsRtcPublishStream* publisher = new SrsRtcPublishStream(this, _srs_context->get_id());
+    SrsRtcPublishStream* publisher = new SrsRtcPublishStream(wrapper_, _srs_context->get_id());
     if ((err = publisher->initialize(req, stream_desc)) != srs_success) {
         srs_freep(publisher);
         return srs_error_wrap(err, "rtc publisher init");
@@ -3447,5 +3451,15 @@ srs_error_t SrsRtcConnection::create_publisher(SrsRequest* req, SrsRtcSourceDesc
     // For example, for single PC, we maybe start publisher when create it, because DTLS is done.
 
     return err;
+}
+
+void SrsRtcConnection::add_in_manager_with_id(std::string& id)
+{
+    _srs_rtc_manager->add_with_id(id, wrapper_);
+}
+
+void SrsRtcConnection::add_in_manager_with_fast_id(uint64_t id)
+{
+    _srs_rtc_manager->add_with_fast_id(id, wrapper_);
 }
 

@@ -370,7 +370,7 @@ srs_error_t SrsRtcServer::on_udp_packet(SrsUdpMuxSocket* skt)
 {
     srs_error_t err = srs_success;
 
-    SrsRtcConnection* session = NULL;
+    SrsLazyObjectWrapper<SrsRtcConnection>* session = NULL;
     char* data = skt->data(); int size = skt->size();
     bool is_rtp_or_rtcp = srs_is_rtp_or_rtcp((uint8_t*)data, size);
     bool is_rtcp = srs_is_rtcp((uint8_t*)data, size);
@@ -378,16 +378,16 @@ srs_error_t SrsRtcServer::on_udp_packet(SrsUdpMuxSocket* skt)
     uint64_t fast_id = skt->fast_id();
     // Try fast id first, if not found, search by long peer id.
     if (fast_id) {
-        session = (SrsRtcConnection*)_srs_rtc_manager->find_by_fast_id(fast_id);
+        session = (SrsLazyObjectWrapper<SrsRtcConnection>*)_srs_rtc_manager->find_by_fast_id(fast_id);
     }
     if (!session) {
         string peer_id = skt->peer_id();
-        session = (SrsRtcConnection*)_srs_rtc_manager->find_by_id(peer_id);
+        session = (SrsLazyObjectWrapper<SrsRtcConnection>*)_srs_rtc_manager->find_by_id(peer_id);
     }
 
     if (session) {
         // When got any packet, the session is alive now.
-        session->alive();
+        session->resource()->alive();
     }
 
     // For STUN, the peer address may change.
@@ -404,7 +404,7 @@ srs_error_t SrsRtcServer::on_udp_packet(SrsUdpMuxSocket* skt)
             session = find_session_by_username(ping.get_username());
         }
         if (session) {
-            session->switch_to_context();
+            session->resource()->switch_to_context();
         }
 
         srs_info("recv stun packet from %s, fast=%" PRId64 ", use-candidate=%d, ice-controlled=%d, ice-controlling=%d",
@@ -418,14 +418,14 @@ srs_error_t SrsRtcServer::on_udp_packet(SrsUdpMuxSocket* skt)
 
         // For each binding request, update the UDP socket.
         if (ping.is_binding_request()) {
-            session->udp()->update_sendonly_socket(skt);
+            session->resource()->udp()->update_sendonly_socket(skt);
         }
 
-        return session->udp()->on_stun(&ping, data, size);
+        return session->resource()->udp()->on_stun(&ping, data, size);
     }
 
     // For DTLS, RTCP or RTP, which does not support peer address changing.
-    if (!session) {
+    if (!session || !session->resource()->is_alive()) {
         string peer_id = skt->peer_id();
         return srs_error_new(ERROR_RTC_STUN, "no session, peer_id=%s, fast=%" PRId64, peer_id.c_str(), fast_id);
     }
@@ -434,23 +434,23 @@ srs_error_t SrsRtcServer::on_udp_packet(SrsUdpMuxSocket* skt)
     if (is_rtp_or_rtcp && !is_rtcp) {
         ++_srs_pps_rrtps->sugar;
 
-        err = session->udp()->on_rtp(data, size);
+        err = session->resource()->udp()->on_rtp(data, size);
         if (err != srs_success) {
-            session->switch_to_context();
+            session->resource()->switch_to_context();
         }
         return err;
     }
 
-    session->switch_to_context();
+    session->resource()->switch_to_context();
     if (is_rtp_or_rtcp && is_rtcp) {
         ++_srs_pps_rrtcps->sugar;
 
-        return session->udp()->on_rtcp(data, size);
+        return session->resource()->udp()->on_rtcp(data, size);
     }
     if (srs_is_dtls((uint8_t*)data, size)) {
         ++_srs_pps_rstuns->sugar;
 
-        return session->udp()->on_dtls(data, size);
+        return session->resource()->udp()->on_dtls(data, size);
     }
     return srs_error_new(ERROR_RTC_UDP, "unknown packet");
 }
@@ -489,7 +489,8 @@ srs_error_t SrsRtcServer::listen_api()
     return err;
 }
 
-srs_error_t SrsRtcServer::create_session(SrsRtcUserConfig* ruc, SrsSdp& local_sdp, SrsRtcConnection** psession)
+srs_error_t SrsRtcServer::create_session(SrsRtcUserConfig* ruc, SrsSdp& local_sdp, 
+    SrsLazyObjectWrapper<SrsRtcConnection>* session)
 {
     srs_error_t err = srs_success;
 
@@ -507,18 +508,18 @@ srs_error_t SrsRtcServer::create_session(SrsRtcUserConfig* ruc, SrsSdp& local_sd
     }
 
     // TODO: FIXME: add do_create_session to error process.
-    SrsRtcConnection* session = new SrsRtcConnection(this, cid);
+    session->resource()->set_rtc_server(this);
+    session->resource()->set_cid(cid);
     if ((err = do_create_session(ruc, local_sdp, session)) != srs_success) {
         srs_freep(session);
         return srs_error_wrap(err, "create session");
     }
 
-    *psession = session;
-
     return err;
 }
 
-srs_error_t SrsRtcServer::do_create_session(SrsRtcUserConfig* ruc, SrsSdp& local_sdp, SrsRtcConnection* session)
+srs_error_t SrsRtcServer::do_create_session(SrsRtcUserConfig* ruc, SrsSdp& local_sdp, 
+    SrsLazyObjectWrapper<SrsRtcConnection>* session)
 {
     srs_error_t err = srs_success;
 
@@ -526,17 +527,17 @@ srs_error_t SrsRtcServer::do_create_session(SrsRtcUserConfig* ruc, SrsSdp& local
 
     // first add publisher/player for negotiate sdp media info
     if (ruc->publish_) {
-        if ((err = session->add_publisher(ruc, local_sdp)) != srs_success) {
+        if ((err = session->resource()->add_publisher(ruc, local_sdp)) != srs_success) {
             return srs_error_wrap(err, "add publisher");
         }
     } else {
-        if ((err = session->add_player(ruc, local_sdp)) != srs_success) {
+        if ((err = session->resource()->add_player(ruc, local_sdp)) != srs_success) {
             return srs_error_wrap(err, "add player");
         }
     }
 
     // All tracks default as inactive, so we must enable them.
-    session->set_all_tracks_status(req->get_stream_url(), ruc->publish_, true);
+    session->resource()->set_all_tracks_status(req->get_stream_url(), ruc->publish_, true);
 
     std::string local_pwd = srs_random_str(32);
     std::string local_ufrag = "";
@@ -600,26 +601,23 @@ srs_error_t SrsRtcServer::do_create_session(SrsRtcUserConfig* ruc, SrsSdp& local
     }
     local_sdp.set_dtls_role(local_sdp.session_negotiate_.dtls_role);
 
-    session->set_remote_sdp(ruc->remote_sdp_);
+    session->resource()->set_remote_sdp(ruc->remote_sdp_);
     // We must setup the local SDP, then initialize the session object.
-    session->set_local_sdp(local_sdp);
-    session->set_state_as_waiting_stun();
+    session->resource()->set_local_sdp(local_sdp);
+    session->resource()->set_state_as_waiting_stun();
 
     // Before session initialize, we must setup the local SDP.
-    if ((err = session->initialize(req, ruc->dtls_, ruc->srtp_, username)) != srs_success) {
+    if ((err = session->resource()->initialize(req, ruc->dtls_, ruc->srtp_, username)) != srs_success) {
         return srs_error_wrap(err, "init");
     }
-
-    // We allows username is optional, but it never empty here.
-    _srs_rtc_manager->add_with_name(username, session);
 
     return err;
 }
 
-SrsRtcConnection* SrsRtcServer::find_session_by_username(const std::string& username)
+SrsLazyObjectWrapper<SrsRtcConnection>* SrsRtcServer::find_session_by_username(const std::string& username)
 {
     ISrsResource* conn = _srs_rtc_manager->find_by_name(username);
-    return dynamic_cast<SrsRtcConnection*>(conn);
+    return dynamic_cast<SrsLazyObjectWrapper<SrsRtcConnection>*>(conn);
 }
 
 srs_error_t SrsRtcServer::on_timer(srs_utime_t interval)
@@ -631,23 +629,24 @@ srs_error_t SrsRtcServer::on_timer(srs_utime_t interval)
 
     // Check all sessions and dispose the dead sessions.
     for (int i = 0; i < (int)_srs_rtc_manager->size(); i++) {
-        SrsRtcConnection* session = dynamic_cast<SrsRtcConnection*>(_srs_rtc_manager->at(i));
+        SrsLazyObjectWrapper<SrsRtcConnection>* session = 
+            dynamic_cast<SrsLazyObjectWrapper<SrsRtcConnection>*>(_srs_rtc_manager->at(i));
         // Ignore not session, or already disposing.
-        if (!session || session->disposing_) {
+        if (!session) {
             continue;
         }
 
         // Update stat if session is alive.
-        if (session->is_alive()) {
+        if (session->resource()->is_alive()) {
             nn_rtc_conns++;
-            SrsStatistic::instance()->kbps_add_delta(session->get_id().c_str(), session->delta());
+            SrsStatistic::instance()->kbps_add_delta(session->resource()->get_id().c_str(), session->resource()->delta());
             continue;
         }
 
         SrsContextRestore(_srs_context->get_id());
-        session->switch_to_context();
+        session->resource()->switch_to_context();
 
-        string username = session->username();
+        string username = session->resource()->username();
         srs_trace("RTC: session destroy by timeout, username=%s", username.c_str());
 
         // Use manager to free session and notify other objects.

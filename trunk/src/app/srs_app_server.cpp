@@ -1173,7 +1173,11 @@ srs_error_t SrsServer::do_on_tcp_client(ISrsListener* listener, srs_netfd_t& stf
             && b[6] == 0x21 && b[7] == 0x12 && b[8] == 0xa4 && b[9] == 0x42
         ) {
             // TODO: FIXME: Should manage this connection by _srs_rtc_manager
-            resource = new SrsRtcTcpConn(io, ip, port, this);
+            SrsLazyObjectWrapper<SrsRtcTcpConn>* root = new SrsLazyObjectWrapper<SrsRtcTcpConn>();
+            if((err = root->resource()->initialize(io, ip, port, this)) != srs_success) {
+                return srs_error_wrap(err, "initialize rtp tcp");
+            }
+            resource = root;
         } else {
             resource = new SrsHttpxConn(listener == http_listener_, this, io, http_server, ip, port);
         }
@@ -1193,7 +1197,11 @@ srs_error_t SrsServer::do_on_tcp_client(ISrsListener* listener, srs_netfd_t& stf
 #ifdef SRS_RTC
         } else if (listener == webrtc_listener_) {
             // TODO: FIXME: Should manage this connection by _srs_rtc_manager
-            resource = new SrsRtcTcpConn(new SrsTcpConnection(stfd2), ip, port, this);
+             SrsLazyObjectWrapper<SrsRtcTcpConn>* root = new SrsLazyObjectWrapper<SrsRtcTcpConn>();
+            if((err = root->resource()->initialize(new SrsTcpConnection(stfd2), ip, port, this)) != srs_success) {
+                return srs_error_wrap(err, "initialize rtp tcp");
+            }
+            resource = root;
 #endif
         } else if (listener == exporter_listener_) {
             // TODO: FIXME: Maybe should support https metrics.

@@ -56,11 +56,11 @@ private:
     SrsRtcDummyNetwork* dummy_;
 private:
     // WebRTC session object.
-    SrsRtcConnection* conn_;
+    SrsWeakLazyObjectWrapper<SrsRtcConnection> conn_;
     // Delta object for statistics.
     SrsEphemeralDelta* delta_;
 public:
-    SrsRtcNetworks(SrsRtcConnection* conn);
+    SrsRtcNetworks(SrsLazyObjectWrapper<SrsRtcConnection>* conn);
     virtual ~SrsRtcNetworks();
 // DTLS transport functions.
 public:
@@ -123,7 +123,7 @@ class SrsRtcUdpNetwork : public ISrsRtcNetwork
 {
 private:
     // WebRTC session object.
-    SrsRtcConnection* conn_;
+    SrsWeakLazyObjectWrapper<SrsRtcConnection> conn_;
     // Delta object for statistics.
     SrsEphemeralDelta* delta_;
     SrsRtcNetworkState state_;
@@ -137,7 +137,7 @@ private:
     // The DTLS transport over this network.
     ISrsRtcTransport* transport_;
 public:
-    SrsRtcUdpNetwork(SrsRtcConnection* conn, SrsEphemeralDelta* delta);
+    SrsRtcUdpNetwork(SrsWeakLazyObjectWrapper<SrsRtcConnection>& conn, SrsEphemeralDelta* delta);
     virtual ~SrsRtcUdpNetwork();
 public:
     // Update the UDP connection.
@@ -174,23 +174,23 @@ public:
 class SrsRtcTcpNetwork: public ISrsRtcNetwork
 {
 private:
-    SrsRtcConnection* conn_;
+    SrsWeakLazyObjectWrapper<SrsRtcConnection> conn_;
     SrsEphemeralDelta* delta_;
     ISrsProtocolReadWriter* sendonly_skt_;
 private:
      // The DTLS transport over this network.
     ISrsRtcTransport* transport_;
-    SrsRtcTcpConn* owner_;
+    SrsLazyObjectWrapper<SrsRtcTcpConn>* owner_;
 private:
     std::string peer_ip_;
     int peer_port_;
     SrsRtcNetworkState state_;
 public:
-    SrsRtcTcpNetwork(SrsRtcConnection* conn, SrsEphemeralDelta* delta);
+    SrsRtcTcpNetwork(SrsWeakLazyObjectWrapper<SrsRtcConnection>& conn, SrsEphemeralDelta* delta);
     virtual ~SrsRtcTcpNetwork();
 public:
-    void set_owner(SrsRtcTcpConn* v) { owner_ = v; }
-    SrsRtcTcpConn* owner() { return owner_; }
+    void set_owner(SrsLazyObjectWrapper<SrsRtcTcpConn>* v) { owner_ = v->copy(); }
+    SrsLazyObjectWrapper<SrsRtcTcpConn>* owner() { return owner_; }
     void update_sendonly_socket(ISrsProtocolReadWriter* skt);
 //ISrsRtcNetwork 
 public:
@@ -232,7 +232,7 @@ public:
 };
 
 // For WebRTC over TCP.
-class SrsRtcTcpConn : public ISrsConnection, public ISrsStartable, public ISrsCoroutineHandler, public ISrsDisposingHandler
+class SrsRtcTcpConn : public ISrsConnection, public ISrsStartable, public ISrsCoroutineHandler, public SrsLazyObject
 {
 private:
     // The manager object to manage the connection.
@@ -245,13 +245,19 @@ private:
     // The delta for statistic.
     SrsNetworkDelta* delta_;
     // WebRTC session object.
-    SrsRtcConnection* session_;
+    SrsLazyObjectWrapper<SrsRtcConnection>* session_;
     ISrsProtocolReadWriter* skt_;
     // Packet cache.
     char* pkt_;
+
+    SrsLazyObjectWrapper<SrsRtcTcpConn>* wrapper_;
 public:
-    SrsRtcTcpConn(ISrsProtocolReadWriter* skt, std::string cip, int port, ISrsResourceManager* cm);
+    SrsRtcTcpConn(SrsLazyObjectWrapper<SrsRtcTcpConn>* w);
+    //SrsRtcTcpConn(ISrsProtocolReadWriter* skt, std::string cip, int port, ISrsResourceManager* cm);
     virtual ~SrsRtcTcpConn();
+
+    srs_error_t initialize(ISrsProtocolReadWriter* skt, std::string cip, int port, ISrsResourceManager* cm);
+    srs_error_t close();
 public:
     ISrsKbpsDelta* delta();
 // Interface ISrsResource.
@@ -273,10 +279,6 @@ private:
     srs_error_t read_packet(char* pkt, int* nb_pkt);
     srs_error_t on_stun(char* pkt, int nb_pkt);
     srs_error_t on_tcp_pkt(char* pkt, int nb_pkt);
-// Interface of ISrsDisposingHandler
-public:
-    virtual void on_before_dispose(ISrsResource* c);
-    virtual void on_disposing(ISrsResource* c);
 };
 
 #endif

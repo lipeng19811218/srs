@@ -211,7 +211,7 @@ class SrsRtcPlayStream : public ISrsCoroutineHandler, public ISrsReloadHandler
 private:
     SrsContextId cid_;
     SrsFastCoroutine* trd_;
-    SrsRtcConnection* session_;
+    SrsWeakLazyObjectWrapper<SrsRtcConnection>* session_;
     SrsRtcPLIWorker* pli_worker_;
 private:
     SrsRequest* req_;
@@ -240,7 +240,7 @@ private:
     // Whether player started.
     bool is_started;
 public:
-    SrsRtcPlayStream(SrsRtcConnection* s, const SrsContextId& cid);
+    SrsRtcPlayStream(SrsLazyObjectWrapper<SrsRtcConnection>* s, const SrsContextId& cid);
     virtual ~SrsRtcPlayStream();
 public:
     srs_error_t initialize(SrsRequest* request, std::map<uint32_t, SrsRtcTrackDescription*> sub_relations);
@@ -330,7 +330,7 @@ private:
     SrsRtcPLIWorker* pli_worker_;
     SrsErrorPithyPrint* twcc_epp_;
 private:
-    SrsRtcConnection* session_;
+    SrsWeakLazyObjectWrapper<SrsRtcConnection>* session_;
     uint16_t pt_to_drop_;
     // Whether enabled nack.
     bool nack_enabled_;
@@ -356,7 +356,7 @@ private:
     bool is_started;
     srs_utime_t last_time_send_twcc_;
 public:
-    SrsRtcPublishStream(SrsRtcConnection* session, const SrsContextId& cid);
+    SrsRtcPublishStream(SrsLazyObjectWrapper<SrsRtcConnection>* session, const SrsContextId& cid);
     virtual ~SrsRtcPublishStream();
 public:
     srs_error_t initialize(SrsRequest* req, SrsRtcSourceDescription* stream_desc);
@@ -402,9 +402,9 @@ private:
 class SrsRtcConnectionNackTimer : public ISrsFastTimer
 {
 private:
-    SrsRtcConnection* p_;
+    SrsWeakLazyObjectWrapper<SrsRtcConnection>* p_;
 public:
-    SrsRtcConnectionNackTimer(SrsRtcConnection* p);
+    SrsRtcConnectionNackTimer(SrsLazyObjectWrapper<SrsRtcConnection>* p);
     virtual ~SrsRtcConnectionNackTimer();
 // interface ISrsFastTimer
 private:
@@ -415,7 +415,7 @@ private:
 //
 // For performance, we use non-public from resource,
 // see https://stackoverflow.com/questions/3747066/c-cannot-convert-from-base-a-to-derived-type-b-via-virtual-base-a
-class SrsRtcConnection : public ISrsResource, public ISrsDisposingHandler, public ISrsExpire
+class SrsRtcConnection : public ISrsResource, public ISrsExpire, public SrsLazyObject
 {
     friend class SrsSecurityTransport;
     friend class SrsRtcPlayStream;
@@ -423,7 +423,6 @@ class SrsRtcConnection : public ISrsResource, public ISrsDisposingHandler, publi
 private:
     friend class SrsRtcConnectionNackTimer;
     SrsRtcConnectionNackTimer* timer_nack_;
-public:
     bool disposing_;
 private:
     SrsRtcServer* server_;
@@ -465,13 +464,13 @@ private:
     SrsErrorPithyPrint* pli_epp;
 private:
     bool nack_enabled_;
+    SrsLazyObjectWrapper<SrsRtcConnection>* wrapper_;
 public:
-    SrsRtcConnection(SrsRtcServer* s, const SrsContextId& cid);
+    SrsRtcConnection(SrsLazyObjectWrapper<SrsRtcConnection>* wrap);
     virtual ~SrsRtcConnection();
 // interface ISrsDisposingHandler
 public:
-    virtual void on_before_dispose(ISrsResource* c);
-    virtual void on_disposing(ISrsResource* c);
+    void close();
 public:
     // TODO: FIXME: save only connection info.
     SrsSdp* get_local_sdp();
@@ -551,6 +550,11 @@ private:
     srs_error_t generate_play_local_sdp_for_video(SrsSdp& local_sdp, SrsRtcSourceDescription* stream_desc, bool unified_plan, std::string cname);
     srs_error_t create_player(SrsRequest* request, std::map<uint32_t, SrsRtcTrackDescription*> sub_relations);
     srs_error_t create_publisher(SrsRequest* request, SrsRtcSourceDescription* stream_desc);
+public:
+    void set_rtc_server(SrsRtcServer* s) { server_ = s; }
+    void set_cid(const SrsContextId& id) { cid_ = id; }
+    void add_in_manager_with_id(std::string& id);
+    void add_in_manager_with_fast_id(uint64_t id);
 };
 
 #endif

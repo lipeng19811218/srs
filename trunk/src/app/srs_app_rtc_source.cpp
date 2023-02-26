@@ -2311,9 +2311,9 @@ SrsRtcTrackDescription* SrsRtcSourceDescription::find_track_description_by_ssrc(
     return NULL;
 }
 
-SrsRtcRecvTrack::SrsRtcRecvTrack(SrsRtcConnection* session, SrsRtcTrackDescription* track_desc, bool is_audio)
+SrsRtcRecvTrack::SrsRtcRecvTrack(SrsWeakLazyObjectWrapper<SrsRtcConnection>* session, SrsRtcTrackDescription* track_desc, bool is_audio)
 {
-    session_ = session;
+    session_ = new SrsWeakLazyObjectWrapper<SrsRtcConnection>(session->resource());
     track_desc_ = track_desc->copy();
     nack_no_copy_ = false;
 
@@ -2337,6 +2337,7 @@ SrsRtcRecvTrack::~SrsRtcRecvTrack()
     srs_freep(rtp_queue_);
     srs_freep(nack_receiver_);
     srs_freep(track_desc_);
+    srs_freep(session_);
 }
 
 bool SrsRtcRecvTrack::has_ssrc(uint32_t ssrc)
@@ -2411,7 +2412,11 @@ srs_error_t SrsRtcRecvTrack::send_rtcp_rr()
 
     uint32_t ssrc = track_desc_->ssrc_;
     const uint64_t& last_time = last_sender_report_sys_time_;
-    if ((err = session_->send_rtcp_rr(ssrc, rtp_queue_, last_time, last_sender_report_ntp_)) != srs_success) {
+    if(!session_->is_valid()) {
+        return srs_error_new(ERROR_RTC_INVALID_CONN, "invalid rtc conn");
+    }
+    SrsAutoLockWeakLazyObject<SrsRtcConnection> lock(session_);
+    if ((err = session_->resource()->send_rtcp_rr(ssrc, rtp_queue_, last_time, last_sender_report_ntp_)) != srs_success) {
         return srs_error_wrap(err, "ssrc=%u, last_time=%" PRId64, ssrc, last_time);
     }
 
@@ -2422,7 +2427,11 @@ srs_error_t SrsRtcRecvTrack::send_rtcp_xr_rrtr()
 {
     srs_error_t err = srs_success;
 
-    if ((err = session_->send_rtcp_xr_rrtr(track_desc_->ssrc_)) != srs_success) {
+    if(!session_->is_valid()) {
+        return srs_error_new(ERROR_RTC_INVALID_CONN, "invalid rtc conn");
+    }
+    SrsAutoLockWeakLazyObject<SrsRtcConnection> lock(session_);
+    if ((err = session_->resource()->send_rtcp_xr_rrtr(track_desc_->ssrc_)) != srs_success) {
         return srs_error_wrap(err, "ssrc=%u", track_desc_->ssrc_);
     }
 
@@ -2487,12 +2496,16 @@ srs_error_t SrsRtcRecvTrack::do_check_send_nacks(uint32_t& timeout_nacks)
     srs_error_t err = srs_success;
 
     uint32_t sent_nacks = 0;
-    session_->check_send_nacks(nack_receiver_, track_desc_->ssrc_, sent_nacks, timeout_nacks);
+    if(!session_->is_valid()) {
+        return srs_error_new(ERROR_RTC_INVALID_CONN, "invalid rtc conn");
+    }
+    SrsAutoLockWeakLazyObject<SrsRtcConnection> lock(session_);
+    session_->resource()->check_send_nacks(nack_receiver_, track_desc_->ssrc_, sent_nacks, timeout_nacks);
 
     return err;
 }
 
-SrsRtcAudioRecvTrack::SrsRtcAudioRecvTrack(SrsRtcConnection* session, SrsRtcTrackDescription* track_desc)
+SrsRtcAudioRecvTrack::SrsRtcAudioRecvTrack(SrsWeakLazyObjectWrapper<SrsRtcConnection>* session, SrsRtcTrackDescription* track_desc)
     : SrsRtcRecvTrack(session, track_desc, true)
 {
 }
@@ -2539,7 +2552,7 @@ srs_error_t SrsRtcAudioRecvTrack::check_send_nacks()
     return err;
 }
 
-SrsRtcVideoRecvTrack::SrsRtcVideoRecvTrack(SrsRtcConnection* session, SrsRtcTrackDescription* track_desc)
+SrsRtcVideoRecvTrack::SrsRtcVideoRecvTrack(SrsWeakLazyObjectWrapper<SrsRtcConnection>* session, SrsRtcTrackDescription* track_desc)
     : SrsRtcRecvTrack(session, track_desc, false)
 {
 }
@@ -2636,9 +2649,9 @@ uint16_t SrsRtcSeqJitter::correct(uint16_t value)
     return jitter_->correct(value);
 }
 
-SrsRtcSendTrack::SrsRtcSendTrack(SrsRtcConnection* session, SrsRtcTrackDescription* track_desc, bool is_audio)
+SrsRtcSendTrack::SrsRtcSendTrack(SrsWeakLazyObjectWrapper<SrsRtcConnection>* session, SrsRtcTrackDescription* track_desc, bool is_audio)
 {
-    session_ = session;
+    session_ = new SrsWeakLazyObjectWrapper<SrsRtcConnection>(session->resource());
     track_desc_ = track_desc->copy();
     nack_no_copy_ = false;
 
@@ -2662,6 +2675,7 @@ SrsRtcSendTrack::~SrsRtcSendTrack()
     srs_freep(nack_epp);
     srs_freep(jitter_ts_);
     srs_freep(jitter_seq_);
+    srs_freep(session_);
 }
 
 bool SrsRtcSendTrack::has_ssrc(uint32_t ssrc)
@@ -2764,7 +2778,11 @@ srs_error_t SrsRtcSendTrack::on_recv_nack(const vector<uint16_t>& lost_seqs)
         }
 
         // By default, we send packets by sendmmsg.
-        if ((err = session_->do_send_packet(pkt)) != srs_success) {
+        if(!session_->is_valid()) {
+            return srs_error_new(ERROR_RTC_INVALID_CONN, "invalid rtc conn");
+        }
+        SrsAutoLockWeakLazyObject<SrsRtcConnection> lock(session_);
+        if ((err = session_->resource()->do_send_packet(pkt)) != srs_success) {
             return srs_error_wrap(err, "raw send");
         }
     }
@@ -2772,7 +2790,7 @@ srs_error_t SrsRtcSendTrack::on_recv_nack(const vector<uint16_t>& lost_seqs)
     return err;
 }
 
-SrsRtcAudioSendTrack::SrsRtcAudioSendTrack(SrsRtcConnection* session, SrsRtcTrackDescription* track_desc)
+SrsRtcAudioSendTrack::SrsRtcAudioSendTrack(SrsWeakLazyObjectWrapper<SrsRtcConnection>* session, SrsRtcTrackDescription* track_desc)
     : SrsRtcSendTrack(session, track_desc, true)
 {
 }
@@ -2804,8 +2822,11 @@ srs_error_t SrsRtcAudioSendTrack::on_rtp(SrsRtpPacket* pkt)
 
     // Rebuild the sequence number and timestamp of packet, see https://github.com/ossrs/srs/issues/3167
     rebuild_packet(pkt);
-
-    if ((err = session_->do_send_packet(pkt)) != srs_success) {
+    if(!session_->is_valid()) {
+        return srs_error_new(ERROR_RTC_INVALID_CONN, "invalid rtc conn");
+    }
+    SrsAutoLockWeakLazyObject<SrsRtcConnection> lock(session_);
+    if ((err = session_->resource()->do_send_packet(pkt)) != srs_success) {
         return srs_error_wrap(err, "raw send");
     }
 
@@ -2822,7 +2843,7 @@ srs_error_t SrsRtcAudioSendTrack::on_rtcp(SrsRtpPacket* pkt)
     return err;
 }
 
-SrsRtcVideoSendTrack::SrsRtcVideoSendTrack(SrsRtcConnection* session, SrsRtcTrackDescription* track_desc)
+SrsRtcVideoSendTrack::SrsRtcVideoSendTrack(SrsWeakLazyObjectWrapper<SrsRtcConnection>* session, SrsRtcTrackDescription* track_desc)
     : SrsRtcSendTrack(session, track_desc, false)
 {
 }
@@ -2854,8 +2875,11 @@ srs_error_t SrsRtcVideoSendTrack::on_rtp(SrsRtpPacket* pkt)
 
     // Rebuild the sequence number and timestamp of packet, see https://github.com/ossrs/srs/issues/3167
     rebuild_packet(pkt);
-
-    if ((err = session_->do_send_packet(pkt)) != srs_success) {
+    if(!session_->is_valid()) {
+        return srs_error_new(ERROR_RTC_INVALID_CONN, "invalid rtc conn");
+    }
+    SrsAutoLockWeakLazyObject<SrsRtcConnection> lock(session_);
+    if ((err = session_->resource()->do_send_packet(pkt)) != srs_success) {
         return srs_error_wrap(err, "raw send");
     }
 

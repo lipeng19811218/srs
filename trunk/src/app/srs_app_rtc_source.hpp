@@ -20,6 +20,7 @@
 #include <srs_protocol_st.hpp>
 #include <srs_app_source.hpp>
 #include <srs_kernel_rtc_rtp.hpp>
+#include <srs_app_conn.hpp>
 
 class SrsRequest;
 class SrsMetaCache;
@@ -511,7 +512,7 @@ class SrsRtcRecvTrack
 protected:
     SrsRtcTrackDescription* track_desc_;
 protected:
-    SrsRtcConnection* session_;
+    SrsWeakLazyObjectWrapper<SrsRtcConnection>* session_;
     SrsRtpRingBuffer* rtp_queue_;
     SrsRtpNackForReceiver* nack_receiver_;
 private:
@@ -529,7 +530,7 @@ protected:
     double rate_;
     uint64_t last_sender_report_sys_time_;
 public:
-    SrsRtcRecvTrack(SrsRtcConnection* session, SrsRtcTrackDescription* stream_descs, bool is_audio);
+    SrsRtcRecvTrack(SrsWeakLazyObjectWrapper<SrsRtcConnection>* session, SrsRtcTrackDescription* stream_descs, bool is_audio);
     virtual ~SrsRtcRecvTrack();
 public:
     // SrsRtcSendTrack::set_nack_no_copy
@@ -558,7 +559,7 @@ protected:
 class SrsRtcAudioRecvTrack : public SrsRtcRecvTrack, public ISrsRtspPacketDecodeHandler
 {
 public:
-    SrsRtcAudioRecvTrack(SrsRtcConnection* session, SrsRtcTrackDescription* track_desc);
+    SrsRtcAudioRecvTrack(SrsWeakLazyObjectWrapper<SrsRtcConnection>* session, SrsRtcTrackDescription* track_desc);
     virtual ~SrsRtcAudioRecvTrack();
 public:
     virtual void on_before_decode_payload(SrsRtpPacket* pkt, SrsBuffer* buf, ISrsRtpPayloader** ppayload, SrsRtspPacketPayloadType* ppt);
@@ -570,7 +571,7 @@ public:
 class SrsRtcVideoRecvTrack : public SrsRtcRecvTrack, public ISrsRtspPacketDecodeHandler
 {
 public:
-    SrsRtcVideoRecvTrack(SrsRtcConnection* session, SrsRtcTrackDescription* stream_descs);
+    SrsRtcVideoRecvTrack(SrsWeakLazyObjectWrapper<SrsRtcConnection>* session, SrsRtcTrackDescription* stream_descs);
     virtual ~SrsRtcVideoRecvTrack();
 public:
     virtual void on_before_decode_payload(SrsRtpPacket* pkt, SrsBuffer* buf, ISrsRtpPayloader** ppayload, SrsRtspPacketPayloadType* ppt);
@@ -667,7 +668,7 @@ public:
     SrsRtcTrackDescription* track_desc_;
 protected:
     // The owner connection for this track.
-    SrsRtcConnection* session_;
+    SrsWeakLazyObjectWrapper<SrsRtcConnection>* session_;
     // NACK ARQ ring buffer.
     SrsRtpRingBuffer* rtp_queue_;
 protected:
@@ -680,7 +681,7 @@ private:
     // The pithy print for special stage.
     SrsErrorPithyPrint* nack_epp;
 public:
-    SrsRtcSendTrack(SrsRtcConnection* session, SrsRtcTrackDescription* track_desc, bool is_audio);
+    SrsRtcSendTrack(SrsWeakLazyObjectWrapper<SrsRtcConnection>* session, SrsRtcTrackDescription* track_desc, bool is_audio);
     virtual ~SrsRtcSendTrack();
 public:
     // SrsRtcSendTrack::set_nack_no_copy
@@ -705,7 +706,7 @@ public:
 class SrsRtcAudioSendTrack : public SrsRtcSendTrack
 {
 public:
-    SrsRtcAudioSendTrack(SrsRtcConnection* session, SrsRtcTrackDescription* track_desc);
+    SrsRtcAudioSendTrack(SrsWeakLazyObjectWrapper<SrsRtcConnection>* session, SrsRtcTrackDescription* track_desc);
     virtual ~SrsRtcAudioSendTrack();
 public:
     virtual srs_error_t on_rtp(SrsRtpPacket* pkt);
@@ -715,7 +716,7 @@ public:
 class SrsRtcVideoSendTrack : public SrsRtcSendTrack
 {
 public:
-    SrsRtcVideoSendTrack(SrsRtcConnection* session, SrsRtcTrackDescription* track_desc);
+    SrsRtcVideoSendTrack(SrsWeakLazyObjectWrapper<SrsRtcConnection>* session, SrsRtcTrackDescription* track_desc);
     virtual ~SrsRtcVideoSendTrack();
 public:
     virtual srs_error_t on_rtp(SrsRtpPacket* pkt);

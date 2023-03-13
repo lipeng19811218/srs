@@ -24,6 +24,7 @@
 #include <srs_protocol_conn.hpp>
 #include <srs_app_conn.hpp>
 #include <srs_app_async_call.hpp>
+#include <srs_app_shared_ptr.hpp>
 
 #include <string>
 #include <map>
